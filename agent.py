@@ -65,6 +65,16 @@ class DQNAgent:
         q_values = self.calc_q_values(sess, state, model)
         return policy.select_action(q_values=q_values)
 
+    def get_mean_max_Q(self, sess, samples):
+        mean_max = []
+        INCREMENT = 1000
+        for i in range(0, len(samples), INCREMENT):
+            feed_dict = {self._online_model['input_frames']:
+                samples[i: i + INCREMENT].astype(np.float32)/255.0}
+            mean_max.append(sess.run(self._online_model['mean_max_Q'],
+                feed_dict = feed_dict))
+        return np.mean(mean_max)
+
     def evaluate(self, sess, env, num_episode):
         """Evaluate num_episode games by online model.
         Parameters
@@ -122,7 +132,7 @@ class DQNAgent:
 
         num_environment = env.num_process
         env.reset()
-        
+
         for t in range(0, num_iterations, num_environment):
             old_state, action, reward, new_state, is_terminal = env.get_state()
             # Clip the reward to -1, 0, 1

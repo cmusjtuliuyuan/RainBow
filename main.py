@@ -24,6 +24,20 @@ NUM_BURN_IN = 50000
 LINEAR_DECAY_LENGTH = 4000000
 NUM_EVALUATE_EPSIODE = 20
 
+
+def get_fixed_samples(env, num_actions, num_samples):
+    fixed_samples = []
+    num_environment = env.num_process
+    env.reset()
+
+    for _ in range(0, num_samples, num_environment):
+        old_state, action, reward, new_state, is_terminal = env.get_state()
+        action = np.random.randint(0, num_actions, size=(num_environment,))
+        env.take_action(action)
+        for state in new_state:
+            fixed_samples.append(state)
+    return np.array(fixed_samples)
+
 def main():
     parser = argparse.ArgumentParser(description='Run DQN on Atari Space Invaders')
     parser.add_argument('--env', default='SpaceInvaders-v0', help='Atari env name')
@@ -34,7 +48,7 @@ def main():
     parser.add_argument('--learning_rate', default=0.00025, help='Training learning rate.')
     parser.add_argument('--window_size', default=4, type = int, help=
                                 'Number of frames to feed to the Q-network')
-    parser.add_argument('--batch_size', default=4, type = int, help=
+    parser.add_argument('--batch_size', default=32, type = int, help=
                                 'Batch size of the training part')
     parser.add_argument('--num_process', default=6, type = int, help=
                                 'Number of parallel environment')
@@ -98,8 +112,11 @@ def main():
         sess.run(tf.global_variables_initializer())
         # make target_model equal to online_model
         sess.run(update_target_params_ops)
-        
-        print('Burn in replay_memory')
+
+        print('Prepare fixed samples for mean max Q.')
+        fixed_samples = get_fixed_samples(batch_environment, num_actions, NUM_FIXED_SAMPLES)
+
+        print('Burn in replay_memory.')
         agent.fit(sess, batch_environment, NUM_BURN_IN, do_train=False)
         
         # Begin to train:
@@ -108,7 +125,8 @@ def main():
         for i in range(0, args.num_iteration, fit_iteration):
             # Evaluate:
             reward_mean, reward_var = agent.evaluate(sess, batch_environment, NUM_EVALUATE_EPSIODE)
-            print("%d, %f, %f"%(i, reward_mean, reward_var))
+            mean_max_Q = agent.get_mean_max_Q(sess, fixed_samples)
+            print("%d, %f, %f, %f"%(i, mean_max_Q, reward_mean, reward_var))
             # Train:
             agent.fit(sess, batch_environment, fit_iteration, do_train=True)
 
