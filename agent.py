@@ -47,7 +47,7 @@ class DQNAgent:
         ------
         Q-values for the state(s)
         """
-        state = state.astype(np.float16) / 255.0
+        state = state.astype(np.float32) / 255.0
         feed_dict = {model['input_frames']: state}
         q_values = sess.run(model['q_values'], feed_dict=feed_dict)
         return q_values
