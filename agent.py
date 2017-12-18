@@ -26,6 +26,7 @@ class DQNAgent:
                  memory,
                  policies,
                  gamma,
+                 update_freq,
                  target_update_freq,
                  update_target_params_ops,
                  batch_size,
@@ -35,10 +36,12 @@ class DQNAgent:
         self._memory = memory
         self._policies = policies
         self._gamma = gamma
+        self._update_freq = update_freq
         self._target_update_freq = target_update_freq
         self._update_target_params_ops=update_target_params_ops
         self._batch_size = batch_size
         self._is_double_dqn = is_double_dqn
+        self._update_times = 0
 
 
     def calc_q_values(self, sess, state, model):
@@ -91,7 +94,6 @@ class DQNAgent:
                 if not is_t:
                     reward_of_each_environment[i] += r
                 else:
-                    print("Finish evaluation of one episode")
                     rewards_list.append(reward_of_each_environment[i])
                     reward_of_each_environment[i] = 0
                     num_finished_episode += 1
@@ -117,71 +119,52 @@ class DQNAgent:
         do_train: boolean
           Whether to train the model or skip training (e.g. for burn in).
         """
-        num_environment = env.num_process
-        num_env_step = int(num_iterations / num_process)
 
-        for _ in range(num_env_step):
+        num_environment = env.num_process
+        env.reset()
+        
+        for t in range(0, num_iterations, num_environment):
             old_state, action, reward, new_state, is_terminal = env.get_state()
+            # Clip the reward to -1, 0, 1
+            reward = np.sign(reward)
             self._memory.append(old_state, reward, action, new_state, is_terminal)
 
-            next_action = self.select_action(sess, state, self._policies['train_policy'], self._online_model)
+            next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
             env.take_action(next_action)
 
+            #If train, first decide how many batch update to do, then train.
+            if do_train:
+                num_update = [1 if i%self._update_freq == 0 else 0 for i in range(t, t+num_environment)]
+                for _ in num_update:
+                    old_state_list, reward_list, action_list, new_state_list, is_terminal_list \
+                                    = self._memory.sample(self._batch_size)
 
+                    # calculate y_j
+                    Q_values = self.calc_q_values(sess, new_state_list, self._target_model)
+                    if self._is_double_dqn:
+                        target_action_list = self.calc_q_values(
+                            sess, new_state_list, self._online_model).argmax(axis=1)
+                        max_q = [Q_values[i, j] for i, j in enumerate(target_action_list)]
+                    else:
+                        max_q = Q_values.max(axis=1)
+                    y = np.array(reward_list)
+                    # TODO following three line can be simplifed
+                    for i in range(len(is_terminal_list)):
+                      if not is_terminal_list[i]:
+                          y[i] += self._gamma * max_q[i]
 
-        def select_action_fn(state):
-            return self.select_action(sess, state, self._policies['train_policy'], self._online_model)
+                    # Train on memory sample.
+                    self._update_times += 1
+                    old_state_list = old_state_list.astype(np.float32) / 255.0
+                    feed_dict = {self._online_model['input_frames']: old_state_list,
+                                 self._online_model['Q_vector_indexes']: list(enumerate(action_list)),
+                                 self._online_model['y_ph']: y}
+                    sess.run([self._online_model['train_step']], feed_dict=feed_dict)
+                    
+                    # Assign online_model to target_model 
+                    if self._update_times%self._target_update_freq == 0:
+                        sess.run(self._update_target_params_ops)
 
-        def process_step_fn(old_state, reward, action, state, is_terminal, current_step, t):
-            model1 = self._online_model
-            model2 = self._target_model
-
-
-            reward = self._preprocessor.process_reward(reward)
-            self._memory.append(old_state, reward, action, state, is_terminal, t)
-
-            if do_train and current_step % self._train_freq == 0:
-                # Get sample
-                old_state_list, reward_list, action_list, new_state_list, is_terminal_list, frequency_list = self._memory.sample(self._batch_size)
-
-                # calculate y_j
-                Q_values = self.calc_q_values(sess, new_state_list, model2)
-                if self._is_double_dqn:
-                    target_action_list = self.calc_q_values(
-                        sess, new_state_list, model1).argmax(axis=1)
-                    max_q = [Q_values[i, j] for i, j in enumerate(target_action_list)]
-                else:
-                    max_q = Q_values.max(axis=1)
-                y = np.array(reward_list)
-                for i in range(len(is_terminal_list)):
-                  if not is_terminal_list[i]:
-                      y[i] += self._gamma * max_q[i]
-
-                # Get samples' importance weight
-                if self._is_weighted == 0:
-                    weights = np.ones(self._batch_size) / self._batch_size
-                else:
-                    weights = frequency2weights(frequency_list)
-                # Train on memory sample.
-                old_state_list = self._preprocessor.state2float(old_state_list)
-                feed_dict = {model1['input_frames']: old_state_list,
-                             model1['Q_vector_indexes']: list(enumerate(action_list)),
-                             model1['y_ph']: y,
-                             model1['weights']: weights}
-                sess.run([model1['train_step']], feed_dict=feed_dict)
-
-
-            if (self._target_update_freq is not None and
-                current_step % (self._target_update_freq * self._train_freq) == 0):
-                sess.run(self._update_target_params_ops)
-
-
-        iterations = start_iteration
-        end_iterations = start_iteration + num_iterations
-        while iterations < end_iterations:
-            iterations = _run_episode(env, self._preprocessor,
-                min(max_episode_length, end_iterations - iterations),
-                select_action_fn, process_step_fn, start_step=iterations)
 
 
 

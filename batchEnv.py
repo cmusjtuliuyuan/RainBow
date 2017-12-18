@@ -70,12 +70,11 @@ class Atari_ParallelWorker(mp.Process):
             self.preprocessor.process_state_for_memory(state)
 
     def run(self):
-        print 'worker %d: run'%(self.id,)
+        print('Environment worker %d: run'%(self.id,))
         # This lock to ensure all the process prepared before take actions
         self.lock.release()
         while True:
             command, context = self.pipe.recv()
-            #print 'command:', command, 'context:', context
             if command == 'CLOSE':
                 self.env.close()
                 self.pipe.close()

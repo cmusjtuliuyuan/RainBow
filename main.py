@@ -11,7 +11,9 @@ from model import create_deep_q_network, create_duel_q_network, create_model
 from agent import DQNAgent
 
 NUM_FRAME_PER_ACTION = 4
-REPLAYMEMORY_SIZE = 100000
+UPDATE_FREQUENCY = 4 # do one batch update when UPDATE_FREQUENCY number of new samples come
+TARGET_UPDATE_FREQENCY = 10000
+REPLAYMEMORY_SIZE = 500000
 MAX_EPISODE_LENGTH = 100000
 RMSP_EPSILON = 0.01
 RMSP_DECAY = 0.95
@@ -20,6 +22,7 @@ MAX_EPISODE_LENGTH = 100000
 NUM_FIXED_SAMPLES = 10000
 NUM_BURN_IN = 50000
 LINEAR_DECAY_LENGTH = 4000000
+NUM_EVALUATE_EPSIODE = 20
 
 def main():
     parser = argparse.ArgumentParser(description='Run DQN on Atari Space Invaders')
@@ -33,6 +36,8 @@ def main():
                                 'Number of frames to feed to the Q-network')
     parser.add_argument('--batch_size', default=4, type = int, help=
                                 'Batch size of the training part')
+    parser.add_argument('--num_process', default=6, type = int, help=
+                                'Number of parallel environment')
     parser.add_argument('--num_iteration', default=20000000, type = int, help=
                                 'number of iterations to train')
     parser.add_argument('--eval_every', default=0.001, type = float, help=
@@ -57,7 +62,7 @@ def main():
     tf.set_random_seed(args.seed)
 
 
-    batch_environment = BatchEnvironment(args.env, args.batch_size,
+    batch_environment = BatchEnvironment(args.env, args.num_process,
                 args.window_size, args.input_shape, NUM_FRAME_PER_ACTION, MAX_EPISODE_LENGTH)
     replay_memory = ReplayMemory(REPLAYMEMORY_SIZE, args.window_size, args.input_shape)
     policies = {
@@ -82,7 +87,8 @@ def main():
                     replay_memory,
                     policies,
                     args.gamma,
-                    4,
+                    UPDATE_FREQUENCY,
+                    TARGET_UPDATE_FREQENCY,
                     update_target_params_ops,
                     args.batch_size,
                     args.is_double)
@@ -94,7 +100,17 @@ def main():
         sess.run(update_target_params_ops)
         
         print('Burn in replay_memory')
-        agent.evaluate(sess, batch_environment, 16)
+        agent.fit(sess, batch_environment, NUM_BURN_IN, do_train=False)
+        
+        # Begin to train:
+        fit_iteration = int(args.num_iteration * args.eval_every)
+
+        for i in range(0, args.num_iteration, fit_iteration):
+            # Evaluate:
+            reward_mean, reward_var = agent.evaluate(sess, batch_environment, NUM_EVALUATE_EPSIODE)
+            print("%d, %f, %f"%(i, reward_mean, reward_var))
+            # Train:
+            agent.fit(sess, batch_environment, fit_iteration, do_train=True)
 
     batch_environment.close()
 
