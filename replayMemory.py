@@ -27,15 +27,15 @@ class ReplayMemory:
         if len(self._memory) >= self._max_size:
             del(self._memory[0:num_sample])
 
-        for o_s, r, a, n_s, i_t in zip(old_state, reward, action, new_state, is_terminal):
-            self._memory.append((o_s, r, a, n_s, i_t))
+        for o_s, a, r, n_s, i_t in zip(old_state, action, reward, new_state, is_terminal):
+            self._memory.append((o_s, a, r, n_s, i_t))
 
 
     def sample(self, batch_size, indexes=None):
         """Return samples from the memory.
         Returns
         --------
-        (old_state_list, reward_list, action_list, new_state_list, is_terminal_list, frequency_list)
+        (old_state_list, action_list, reward_list, new_state_list, is_terminal_list, frequency_list)
         """
         samples = random.sample(self._memory, min(batch_size, len(self._memory)))
         zipped = list(zip(*samples))

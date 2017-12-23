@@ -102,16 +102,21 @@ class BatchEnvironment:
         self.pipes = []
         self.locks = []
 
-        def get_multiprocess_numpy(*shape):
-            tmp = np.ctypeslib.as_ctypes(np.zeros(shape, dtype=np.uint8))
+        def get_multiprocess_numpy(dtype, shape):
+            tmp = np.ctypeslib.as_ctypes(np.zeros(shape, dtype=dtype))
             return sharedctypes.Array(tmp._type_, tmp, lock=False) 
 
         self.state = {
-            'old_state': get_multiprocess_numpy(num_process,input_shape[0],input_shape[1],window_size),
-            'action': get_multiprocess_numpy(num_process),
-            'reward': get_multiprocess_numpy(num_process),
-            'new_state': get_multiprocess_numpy(num_process,input_shape[0],input_shape[1],window_size),
-            'is_terminal': get_multiprocess_numpy(num_process),
+            'old_state': get_multiprocess_numpy(np.uint8, 
+                            shape=(num_process,input_shape[0],input_shape[1],window_size)),
+            'action': get_multiprocess_numpy(np.uint8,
+                            shape=(num_process,)),
+            'reward': get_multiprocess_numpy(np.int8,
+                            shape=(num_process,)),
+            'new_state': get_multiprocess_numpy(np.uint8,
+                            shape=(num_process,input_shape[0],input_shape[1],window_size)),
+            'is_terminal': get_multiprocess_numpy(np.uint8,
+                            shape=(num_process,)),
             }
 
         for i in xrange(num_process):
@@ -151,7 +156,7 @@ class BatchEnvironment:
         
         for lock in self.locks:
             lock.release()
-        return old_state, action, reward, new_state, is_terminal
+        return np.copy(old_state), action, reward, np.copy(new_state), is_terminal
 
     def close(self):
         for worker in self.workers:

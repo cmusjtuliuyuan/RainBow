@@ -137,7 +137,7 @@ class DQNAgent:
             old_state, action, reward, new_state, is_terminal = env.get_state()
             # Clip the reward to -1, 0, 1
             reward = np.sign(reward)
-            self._memory.append(old_state, reward, action, new_state, is_terminal)
+            self._memory.append(old_state, action, reward, new_state, is_terminal)
 
             next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
             env.take_action(next_action)
@@ -146,9 +146,8 @@ class DQNAgent:
             if do_train:
                 num_update = [1 if i%self._update_freq == 0 else 0 for i in range(t, t+num_environment)]
                 for _ in num_update:
-                    old_state_list, reward_list, action_list, new_state_list, is_terminal_list \
+                    old_state_list, action_list, reward_list, new_state_list, is_terminal_list \
                                     = self._memory.sample(self._batch_size)
-
                     # calculate y_j
                     Q_values = self.calc_q_values(sess, new_state_list, self._target_model)
                     if self._is_double_dqn:
