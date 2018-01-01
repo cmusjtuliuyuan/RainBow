@@ -3,6 +3,7 @@ import gym
 import numpy as np
 import random
 import tensorflow as tf
+import PIL
 
 from batchEnv import BatchEnvironment
 from replayMemory import ReplayMemory
@@ -10,7 +11,7 @@ from policy import GreedyPolicy, LinearDecayGreedyEpsilonPolicy, UniformRandomPo
 from model import create_deep_q_network, create_duel_q_network, create_model
 from agent import DQNAgent
 
-NUM_FRAME_PER_ACTION = 4
+NUM_FRAME_PER_ACTION = 1
 UPDATE_FREQUENCY = 4 # do one batch update when UPDATE_FREQUENCY number of new samples come
 TARGET_UPDATE_FREQENCY = 10000
 REPLAYMEMORY_SIZE = 500000
@@ -24,6 +25,9 @@ NUM_BURN_IN = 50000
 LINEAR_DECAY_LENGTH = 4000000
 NUM_EVALUATE_EPSIODE = 20
 
+def show_numpy_pillow(np_image):
+    img = PIL.Image.fromarray(np_image)
+    img.show()
 
 def get_fixed_samples(env, num_actions, num_samples):
     fixed_samples = []
@@ -50,15 +54,15 @@ def main():
                                 'Number of frames to feed to the Q-network')
     parser.add_argument('--batch_size', default=32, type = int, help=
                                 'Batch size of the training part')
-    parser.add_argument('--num_process', default=6, type = int, help=
+    parser.add_argument('--num_process', default=3, type = int, help=
                                 'Number of parallel environment')
     parser.add_argument('--num_iteration', default=20000000, type = int, help=
                                 'number of iterations to train')
     parser.add_argument('--eval_every', default=0.001, type = float, help=
                                 'What fraction of num_iteration to run between evaluations.')
-    parser.add_argument('--is_duel', default=0, type = int, help=
+    parser.add_argument('--is_duel', default=1, type = int, help=
                                 'Whether use duel DQN, 0 means no, 1 means yes.')
-    parser.add_argument('--is_double', default=0, type = int, help=
+    parser.add_argument('--is_double', default=1, type = int, help=
                                 'Whether use double DQN, 0 means no, 1 means yes.')
 
 
@@ -80,7 +84,9 @@ def main():
                 args.window_size, args.input_shape, NUM_FRAME_PER_ACTION, MAX_EPISODE_LENGTH)
     replay_memory = ReplayMemory(REPLAYMEMORY_SIZE, args.window_size, args.input_shape)
     policies = {
-        'train_policy': LinearDecayGreedyEpsilonPolicy(1, args.epsilon, LINEAR_DECAY_LENGTH),
+        # number_step is divided by num_process, because of the parrallel Env
+        # TODO check policy
+        'train_policy': LinearDecayGreedyEpsilonPolicy(1, args.epsilon, LINEAR_DECAY_LENGTH/args.num_process),
         'evaluate_policy': GreedyPolicy(),
     }
 
@@ -107,7 +113,8 @@ def main():
                     args.batch_size,
                     args.is_double)
 
-    sess = tf.Session()
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.4)
+    sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
     with sess.as_default():
         sess.run(tf.global_variables_initializer())
         # make target_model equal to online_model
@@ -117,7 +124,7 @@ def main():
         fixed_samples = get_fixed_samples(batch_environment, num_actions, NUM_FIXED_SAMPLES)
 
         print('Burn in replay_memory.')
-        agent.fit(sess, batch_environment, NUM_BURN_IN, do_train=False)
+        #agent.fit(sess, batch_environment, NUM_BURN_IN, do_train=False)
         
         # Begin to train:
         fit_iteration = int(args.num_iteration * args.eval_every)

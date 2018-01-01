@@ -138,16 +138,21 @@ class DQNAgent:
             # Clip the reward to -1, 0, 1
             reward = np.sign(reward)
             self._memory.append(old_state, action, reward, new_state, is_terminal)
-
+            #print 'action:', action, 'reward:', reward, 'is_terminal', is_terminal
+            #print 'old_state:', np.sum(old_state), 'new_state', np.sum(new_state)
             next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
             env.take_action(next_action)
 
             #If train, first decide how many batch update to do, then train.
             if do_train:
+                # TODO check num_update
                 num_update = [1 if i%self._update_freq == 0 else 0 for i in range(t, t+num_environment)]
                 for _ in num_update:
                     old_state_list, action_list, reward_list, new_state_list, is_terminal_list \
                                     = self._memory.sample(self._batch_size)
+                    #print 'action:', action_list
+                    #print 'reward:', reward_list
+                    #print 'is_terminal', is_terminal_list
                     # calculate y_j
                     Q_values = self.calc_q_values(sess, new_state_list, self._target_model)
                     if self._is_double_dqn:
@@ -156,18 +161,15 @@ class DQNAgent:
                         max_q = [Q_values[i, j] for i, j in enumerate(target_action_list)]
                     else:
                         max_q = Q_values.max(axis=1)
-                    y = np.array(reward_list)
-                    # TODO following three line can be simplifed
-                    for i in range(len(is_terminal_list)):
-                      if not is_terminal_list[i]:
-                          y[i] += self._gamma * max_q[i]
+
+                    target_q = np.array(reward_list) + (1-np.array(is_terminal_list))*self._gamma*max_q
 
                     # Train on memory sample.
                     self._update_times += 1
                     old_state_list = old_state_list.astype(np.float32) / 255.0
                     feed_dict = {self._online_model['input_frames']: old_state_list,
                                  self._online_model['Q_vector_indexes']: list(enumerate(action_list)),
-                                 self._online_model['y_ph']: y}
+                                 self._online_model['y_ph']: target_q}
                     sess.run([self._online_model['train_step']], feed_dict=feed_dict)
                     
                     # Assign online_model to target_model 

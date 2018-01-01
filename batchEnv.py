@@ -111,7 +111,7 @@ class BatchEnvironment:
                             shape=(num_process,input_shape[0],input_shape[1],window_size)),
             'action': get_multiprocess_numpy(np.uint8,
                             shape=(num_process,)),
-            'reward': get_multiprocess_numpy(np.int8,
+            'reward': get_multiprocess_numpy(np.int16,
                             shape=(num_process,)),
             'new_state': get_multiprocess_numpy(np.uint8,
                             shape=(num_process,input_shape[0],input_shape[1],window_size)),
