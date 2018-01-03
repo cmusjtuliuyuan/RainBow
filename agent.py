@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 from PIL import Image
 import random
+from huberLoss import mean_huber_loss
 
 class DQNAgent:
     """Class implementing DQN.
@@ -30,7 +31,11 @@ class DQNAgent:
                  target_update_freq,
                  update_target_params_ops,
                  batch_size,
-                 is_double_dqn):
+                 is_double_dqn,
+                 learning_rate,
+                 rmsp_decay,
+                 rmsp_momentum,
+                 rmsp_epsilon):
         self._online_model = online_model
         self._target_model = target_model
         self._memory = memory
@@ -41,7 +46,17 @@ class DQNAgent:
         self._update_target_params_ops=update_target_params_ops
         self._batch_size = batch_size
         self._is_double_dqn = is_double_dqn
+        self._learning_rate = learning_rate
+        self._rmsp_decay = rmsp_decay
+        self._rmsp_momentum = rmsp_momentum
+        self._rmsp_epsilon = rmsp_epsilon
         self._update_times = 0
+
+        self._action_ph = tf.placeholder(tf.int32, [None, 2], name ='action_ph')
+        self._reward_ph = tf.placeholder(tf.float32, name='reward_ph')
+        self._is_terminal_ph = tf.placeholder(tf.float32, name='is_terminal_ph')
+        self._action_chosen_by_online_ph = tf.placeholder(tf.int32, [None, 2], name ='action_chosen_by_online_ph')
+        self._train_op = self._get_train_op(self._reward_ph, self._is_terminal_ph, self._action_ph, self._action_chosen_by_online_ph)
 
 
     def calc_q_values(self, sess, state, model):
@@ -74,6 +89,38 @@ class DQNAgent:
             mean_max.append(sess.run(self._online_model['mean_max_Q'],
                 feed_dict = feed_dict))
         return np.mean(mean_max)
+
+    def _get_train_op(self, reward_ph, is_terminal_ph, action_ph, action_chosen_by_online_ph):
+        """Select the action based on the current state.
+        Inputs
+        --------
+        reward_ph: tensorflow place holder for reward, [batch_size,] float32
+        is_terminal_ph: tensorflow place holder for terminal signal, [batch_size,] float32
+        action_ph: tensorflow place holder for action, [batch_size, 2] int
+        action_chosen_by_online_ph: tensorflow place holder for action chosen by online_model
+                                according to the new state list, [batch_size, 2] int
+        Returns
+        --------
+        train operation
+        """
+        # calculate y_j
+
+        Q_values_target = self._target_model['q_values']
+        Q_values_online = self._online_model['q_values']
+
+        if self._is_double_dqn:
+            online_action_list = tf.argmax(Q_values_online, axis=1)
+            max_q = tf.gather_nd(Q_values_target, action_chosen_by_online_ph)
+        else:
+            max_q = tf.reduce_max(Q_values_target, axis = 1)
+
+        target = reward_ph + (1.0 - is_terminal_ph) * self._gamma * max_q
+        gathered_outputs = tf.gather_nd(Q_values_online, action_ph, name='gathered_outputs')
+
+        loss = mean_huber_loss(target, gathered_outputs)
+        train_op = tf.train.RMSPropOptimizer(self._learning_rate,
+            decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
+        return train_op
 
     def evaluate(self, sess, env, num_episode):
         """Evaluate num_episode games by online model.
@@ -150,29 +197,23 @@ class DQNAgent:
                 for _ in num_update:
                     old_state_list, action_list, reward_list, new_state_list, is_terminal_list \
                                     = self._memory.sample(self._batch_size)
-                    #print 'action:', action_list
-                    #print 'reward:', reward_list
-                    #print 'is_terminal', is_terminal_list
-                    # calculate y_j
-                    Q_values = self.calc_q_values(sess, new_state_list, self._target_model)
+
+                    feed_dict = {self._target_model['input_frames']: new_state_list.astype(np.float32)/255.0,
+                                 self._online_model['input_frames']: old_state_list.astype(np.float32)/255.0,
+                                 self._action_ph: list(enumerate(action_list)),
+                                 self._reward_ph: np.array(reward_list).astype(np.float32),
+                                 self._is_terminal_ph: np.array(is_terminal_list).astype(np.float32),
+                                 }
+
                     if self._is_double_dqn:
-                        target_action_list = self.calc_q_values(
-                            sess, new_state_list, self._online_model).argmax(axis=1)
-                        max_q = [Q_values[i, j] for i, j in enumerate(target_action_list)]
-                    else:
-                        max_q = Q_values.max(axis=1)
+                        action_chosen_by_online = sess.run(self._online_model['action'], feed_dict={
+                                    self._online_model['input_frames']: new_state_list.astype(np.float32)/255.0})
+                        feed_dict[self._action_chosen_by_online_ph] = list(enumerate(action_chosen_by_online))
 
-                    target_q = np.array(reward_list) + (1-np.array(is_terminal_list))*self._gamma*max_q
-
-                    # Train on memory sample.
-                    self._update_times += 1
-                    old_state_list = old_state_list.astype(np.float32) / 255.0
-                    feed_dict = {self._online_model['input_frames']: old_state_list,
-                                 self._online_model['Q_vector_indexes']: list(enumerate(action_list)),
-                                 self._online_model['y_ph']: target_q}
-                    sess.run([self._online_model['train_step']], feed_dict=feed_dict)
+                    sess.run(self._train_op, feed_dict=feed_dict)
                     
-                    # Assign online_model to target_model 
+                    self._update_times += 1
+
                     if self._update_times%self._target_update_freq == 0:
                         sess.run(self._update_target_params_ops)
 

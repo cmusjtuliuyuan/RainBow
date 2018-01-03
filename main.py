@@ -93,11 +93,9 @@ def main():
 
     create_network_fn = create_deep_q_network if args.is_duel == 0 else create_duel_q_network
     online_model, online_params = create_model(args.window_size, args.input_shape, num_actions,
-                    'online_model', create_network_fn, args.learning_rate,
-                    RMSP_DECAY, RMSP_MOMENTUM, RMSP_EPSILON, trainable=True)
+                    'online_model', create_network_fn, trainable=True)
     target_model, target_params = create_model(args.window_size, args.input_shape, num_actions,
-                    'target_model', create_network_fn, args.learning_rate,
-                    RMSP_DECAY, RMSP_MOMENTUM, RMSP_EPSILON, trainable=False)
+                    'target_model', create_network_fn, trainable=False)
     update_target_params_ops = [t.assign(s) for s, t in zip(online_params, target_params)]
 
 
@@ -111,7 +109,11 @@ def main():
                     TARGET_UPDATE_FREQENCY,
                     update_target_params_ops,
                     args.batch_size,
-                    args.is_double)
+                    args.is_double,
+                    args.learning_rate,
+                    RMSP_DECAY,
+                    RMSP_MOMENTUM,
+                    RMSP_EPSILON)
 
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.4)
     sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
@@ -124,7 +126,7 @@ def main():
         fixed_samples = get_fixed_samples(batch_environment, num_actions, NUM_FIXED_SAMPLES)
 
         print('Burn in replay_memory.')
-        #agent.fit(sess, batch_environment, NUM_BURN_IN, do_train=False)
+        agent.fit(sess, batch_environment, NUM_BURN_IN, do_train=False)
         
         # Begin to train:
         fit_iteration = int(args.num_iteration * args.eval_every)

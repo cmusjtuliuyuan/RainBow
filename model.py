@@ -1,7 +1,6 @@
 """Q-networks"""
 
 import tensorflow as tf
-from huberLoss import mean_huber_loss
 
 # Returns tuple of flat output, flat output size, network_parameters.
 def create_conv_network(input_frames, trainable):
@@ -85,8 +84,7 @@ def create_duel_q_network(input_frames, input_length, num_actions, trainable):
     return q_network, parameter_list
 
 
-def create_model(window, input_shape, num_actions, model_name, create_network_fn, learning_rate,
-                rmsp_decay, rmsp_momentum, rmsp_epsilon, trainable):
+def create_model(window, input_shape, num_actions, model_name, create_network_fn, trainable):
     """Create the Q-network model."""
     with tf.name_scope(model_name):
         input_frames = tf.placeholder(tf.float32, [None, input_shape[0],
@@ -95,23 +93,13 @@ def create_model(window, input_shape, num_actions, model_name, create_network_fn
         q_network, parameter_list = create_network_fn(
             input_frames, input_length, num_actions, trainable)
 
-        mean_max_Q =tf.reduce_mean( tf.reduce_max(q_network, axis=[1]), name='mean_max_Q')
-
-        Q_vector_indexes = tf.placeholder(tf.int32, [None, 2], name ='Q_vector_indexes')
-        gathered_outputs = tf.gather_nd(q_network, Q_vector_indexes, name='gathered_outputs')
-
-        y_ph = tf.placeholder(tf.float32, name='y_ph')
-        loss = mean_huber_loss(y_ph, gathered_outputs)
+        mean_max_Q = tf.reduce_mean( tf.reduce_max(q_network, axis=[1]), name='mean_max_Q')
+        action = tf.argmax(q_network, axis=1)
 
         model = {
-            'q_values' : q_network,
-            'input_frames' : input_frames,
-            'Q_vector_indexes' : Q_vector_indexes,
-            'y_ph' : y_ph,
-            'mean_max_Q' : mean_max_Q,
+            'q_values': q_network,
+            'input_frames': input_frames,
+            'mean_max_Q': mean_max_Q,
+            'action': action,
         }
-        if trainable:
-            train_step = tf.train.RMSPropOptimizer(learning_rate,
-                decay=rmsp_decay, momentum=rmsp_momentum, epsilon=rmsp_epsilon).minimize(loss)
-            model['train_step'] = train_step
     return model, parameter_list
