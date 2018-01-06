@@ -6,12 +6,12 @@ import tensorflow as tf
 import PIL
 
 from batchEnv import BatchEnvironment
-from replayMemory import ReplayMemory
+from replayMemory import ReplayMemory, PriorityExperienceReplay
 from policy import GreedyPolicy, LinearDecayGreedyEpsilonPolicy, UniformRandomPolicy
 from model import create_deep_q_network, create_duel_q_network, create_model
 from agent import DQNAgent
 
-NUM_FRAME_PER_ACTION = 1
+NUM_FRAME_PER_ACTION = 4
 UPDATE_FREQUENCY = 4 # do one batch update when UPDATE_FREQUENCY number of new samples come
 TARGET_UPDATE_FREQENCY = 10000
 REPLAYMEMORY_SIZE = 500000
@@ -64,6 +64,8 @@ def main():
                                 'Whether use duel DQN, 0 means no, 1 means yes.')
     parser.add_argument('--is_double', default=1, type = int, help=
                                 'Whether use double DQN, 0 means no, 1 means yes.')
+    parser.add_argument('--is_per', default=1, type = int, help=
+                                'Whether use PriorityExperienceReplay, 0 means no, 1 means yes.')
 
 
     args = parser.parse_args()
@@ -82,11 +84,15 @@ def main():
 
     batch_environment = BatchEnvironment(args.env, args.num_process,
                 args.window_size, args.input_shape, NUM_FRAME_PER_ACTION, MAX_EPISODE_LENGTH)
-    replay_memory = ReplayMemory(REPLAYMEMORY_SIZE, args.window_size, args.input_shape)
+
+    if args.is_per == 1:
+        replay_memory = PriorityExperienceReplay(REPLAYMEMORY_SIZE, args.window_size, args.input_shape)
+    else:
+        replay_memory = ReplayMemory(REPLAYMEMORY_SIZE, args.window_size, args.input_shape)
+
     policies = {
-        # number_step is divided by num_process, because of the parrallel Env
         # TODO check policy
-        'train_policy': LinearDecayGreedyEpsilonPolicy(1, args.epsilon, LINEAR_DECAY_LENGTH/args.num_process),
+        'train_policy': LinearDecayGreedyEpsilonPolicy(1, args.epsilon, LINEAR_DECAY_LENGTH),
         'evaluate_policy': GreedyPolicy(),
     }
 
@@ -110,6 +116,7 @@ def main():
                     update_target_params_ops,
                     args.batch_size,
                     args.is_double,
+                    args.is_per,
                     args.learning_rate,
                     RMSP_DECAY,
                     RMSP_MOMENTUM,

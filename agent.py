@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from PIL import Image
 import random
-from huberLoss import mean_huber_loss
+from huberLoss import mean_huber_loss, weighted_huber_loss
 
 class DQNAgent:
     """Class implementing DQN.
@@ -32,6 +32,7 @@ class DQNAgent:
                  update_target_params_ops,
                  batch_size,
                  is_double_dqn,
+                 is_per,
                  learning_rate,
                  rmsp_decay,
                  rmsp_momentum,
@@ -46,17 +47,22 @@ class DQNAgent:
         self._update_target_params_ops=update_target_params_ops
         self._batch_size = batch_size
         self._is_double_dqn = is_double_dqn
+        self._is_per = is_per
         self._learning_rate = learning_rate
         self._rmsp_decay = rmsp_decay
         self._rmsp_momentum = rmsp_momentum
         self._rmsp_epsilon = rmsp_epsilon
         self._update_times = 0
+        self._beta = 0.5
+        self._beta_increment = (1.0-0.5)/(5000000*0.8)
 
         self._action_ph = tf.placeholder(tf.int32, [None, 2], name ='action_ph')
         self._reward_ph = tf.placeholder(tf.float32, name='reward_ph')
         self._is_terminal_ph = tf.placeholder(tf.float32, name='is_terminal_ph')
         self._action_chosen_by_online_ph = tf.placeholder(tf.int32, [None, 2], name ='action_chosen_by_online_ph')
-        self._train_op = self._get_train_op(self._reward_ph, self._is_terminal_ph, self._action_ph, self._action_chosen_by_online_ph)
+        self._huber_loss_weight_ph = tf.placeholder(tf.float32, name='huber_loss_weight_ph')
+        self._error_op, self._train_op = self._get_error_and_train_op(self._reward_ph,
+                self._is_terminal_ph, self._action_ph, self._action_chosen_by_online_ph, self._huber_loss_weight_ph)
 
 
     def calc_q_values(self, sess, state, model):
@@ -90,7 +96,12 @@ class DQNAgent:
                 feed_dict = feed_dict))
         return np.mean(mean_max)
 
-    def _get_train_op(self, reward_ph, is_terminal_ph, action_ph, action_chosen_by_online_ph):
+    def _get_error_and_train_op(self,
+                               reward_ph,
+                               is_terminal_ph,
+                               action_ph,
+                               action_chosen_by_online_ph,
+                               huber_loss_weight_ph):
         """Select the action based on the current state.
         Inputs
         --------
@@ -117,10 +128,15 @@ class DQNAgent:
         target = reward_ph + (1.0 - is_terminal_ph) * self._gamma * max_q
         gathered_outputs = tf.gather_nd(Q_values_online, action_ph, name='gathered_outputs')
 
-        loss = mean_huber_loss(target, gathered_outputs)
+        if self._is_per == 1:
+            loss = weighted_huber_loss(target, gathered_outputs, huber_loss_weight_ph)
+        else:
+            loss = mean_huber_loss(target, gathered_outputs)
+
         train_op = tf.train.RMSPropOptimizer(self._learning_rate,
             decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
-        return train_op
+        error_op = tf.abs(gathered_outputs - target, name='abs_error')
+        return error_op, train_op
 
     def evaluate(self, sess, env, num_episode):
         """Evaluate num_episode games by online model.
@@ -184,18 +200,26 @@ class DQNAgent:
             old_state, action, reward, new_state, is_terminal = env.get_state()
             # Clip the reward to -1, 0, 1
             reward = np.sign(reward)
-            self._memory.append(old_state, action, reward, new_state, is_terminal)
-            #print 'action:', action, 'reward:', reward, 'is_terminal', is_terminal
-            #print 'old_state:', np.sum(old_state), 'new_state', np.sum(new_state)
+
+            # TODO error and next_action can be combined together
+            if self._is_per==1:
+                error = self._get_error(sess, old_state, action, reward, new_state, is_terminal)
+                self._memory.append(old_state, action, reward, new_state, is_terminal, error)
+            else:
+                self._memory.append(old_state, action, reward, new_state, is_terminal)
+
             next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
             env.take_action(next_action)
 
             #If train, first decide how many batch update to do, then train.
             if do_train:
-                # TODO check num_update
-                num_update = [1 if i%self._update_freq == 0 else 0 for i in range(t, t+num_environment)]
-                for _ in num_update:
-                    old_state_list, action_list, reward_list, new_state_list, is_terminal_list \
+                num_update = sum([1 if i%self._update_freq == 0 else 0 for i in range(t, t+num_environment)])
+                for _ in range(num_update):
+                    if self._is_per==1:
+                        (old_state_list, action_list, reward_list, new_state_list, is_terminal_list),\
+                                idx_list, p_list, sum_p, count = self._memory.sample(self._batch_size)
+                    else:
+                        old_state_list, action_list, reward_list, new_state_list, is_terminal_list \
                                     = self._memory.sample(self._batch_size)
 
                     feed_dict = {self._target_model['input_frames']: new_state_list.astype(np.float32)/255.0,
@@ -210,13 +234,39 @@ class DQNAgent:
                                     self._online_model['input_frames']: new_state_list.astype(np.float32)/255.0})
                         feed_dict[self._action_chosen_by_online_ph] = list(enumerate(action_chosen_by_online))
 
-                    sess.run(self._train_op, feed_dict=feed_dict)
-                    
+                    if self._is_per == 1:
+                        # Annealing weight beta
+                        feed_dict[self._huber_loss_weight_ph] = (np.array(p_list)*count/sum_p)**(-self._beta)
+                        error, _ = sess.run([self._error_op, self._train_op], feed_dict=feed_dict)
+                        self._memory.update(idx_list, error)
+                    else:
+                        sess.run(self._train_op, feed_dict=feed_dict)
+
                     self._update_times += 1
+                    if self._beta < 1:
+                        self._beta += self._beta_increment
 
                     if self._update_times%self._target_update_freq == 0:
                         sess.run(self._update_target_params_ops)
 
+    def _get_error(self, sess, old_state, action, reward, new_state, is_terminal):
+        '''
+        Get error for Prioritized Experience Replay
+        '''
+        feed_dict = {self._target_model['input_frames']: new_state.astype(np.float32)/255.0,
+                     self._online_model['input_frames']: old_state.astype(np.float32)/255.0,
+                     self._action_ph: list(enumerate(action)),
+                     self._reward_ph: np.array(reward).astype(np.float32),
+                     self._is_terminal_ph: np.array(is_terminal).astype(np.float32),
+                     }
+
+        if self._is_double_dqn:
+            action_chosen_by_online = sess.run(self._online_model['action'], feed_dict={
+                        self._online_model['input_frames']: new_state.astype(np.float32)/255.0})
+            feed_dict[self._action_chosen_by_online_ph] = list(enumerate(action_chosen_by_online))
+
+        error = sess.run(self._error_op, feed_dict=feed_dict)
+        return error
 
 
 
