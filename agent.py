@@ -119,12 +119,12 @@ class DQNAgent:
         Q_values_target = self._target_model['q_values']
         Q_values_online = self._online_model['q_values']
 
+        '''
         if self._is_double_dqn:
-            online_action_list = tf.argmax(Q_values_online, axis=1)
             max_q = tf.gather_nd(Q_values_target, action_chosen_by_online_ph)
         else:
             max_q = tf.reduce_max(Q_values_target, axis = 1)
-
+        #This part is for DQN without distributional
         target = reward_ph + (1.0 - is_terminal_ph) * self._gamma * max_q
         gathered_outputs = tf.gather_nd(Q_values_online, action_ph, name='gathered_outputs')
 
@@ -136,6 +136,55 @@ class DQNAgent:
         train_op = tf.train.RMSPropOptimizer(self._learning_rate,
             decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
         error_op = tf.abs(gathered_outputs - target, name='abs_error')
+        return error_op, train_op
+        '''
+
+        #This part is for distributional DQN
+        N_atoms = 51
+        V_Max = 10.0
+        V_Min = - 10.0
+        Delta_z = (V_Max - V_Min)/(N_atoms - 1)
+        z_list = tf.constant([V_Min + i * Delta_z for i in range(N_atoms)],dtype=tf.float32)
+        # batch_size * number_actions * N_atoms
+        Q_distributional_values_target = self._target_model['q_distributional_network']
+        # batch_size * N_atoms
+        # TODO and no double support
+        Q_distributional_chosen_by_action_target = tf.gather_nd(Q_distributional_values_target,
+                                            action_chosen_by_online_ph)
+        # batch_size * N_atoms
+        target = tf.tile(tf.reshape(reward_ph,[-1, 1]), tf.constant([1, N_atoms])) \
+                + self._gamma * tf.multiply(tf.reshape(z_list,[1,N_atoms]),
+                  (1.0 - tf.tile(tf.reshape(is_terminal_ph ,[-1, 1]), tf.constant([1, N_atoms]))))
+        target = tf.clip_by_value(target, V_Min, V_Max)
+        b = (target - V_Min) / Delta_z
+        u, l = tf.ceil(b), tf.floor(b)
+        u_id, l_id = tf.cast(u, tf.int32), tf.cast(l, tf.int32)
+        u_minus_b = u - b
+        b_minus_l = b - l
+
+        Q_distributional_values_online = self._online_model['q_distributional_network']
+        # batch_size * N_atoms
+        Q_distributional_chosen_by_action_online = tf.gather_nd(Q_distributional_values_online,
+                                            action_ph)
+        error = tf.zeros(shape=[self._batch_size],dtype=tf.float32)
+        #m = tf.multiply(Q_distributional_chosen_by_action_target, u_minus_b)\
+        #     + tf.multiply(Q_distributional_chosen_by_action_target, b_minus_u)
+        for j in range(N_atoms):
+            error = error + Q_distributional_chosen_by_action_target[:, j] * (\
+                    u_minus_b[:, j] * \
+                    tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
+                     tf.concat([tf.reshape(tf.range(self._batch_size), [-1, 1]),
+                        tf.reshape(l_id[:, j],[-1,1])], axis = 1))) \
+                    +\
+                    b_minus_l[:, j] * \
+                    tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
+                     tf.concat([tf.reshape(tf.range(self._batch_size), [-1, 1]),
+                        tf.reshape(u_id[:, j],[-1,1])], axis = 1))))
+
+        loss = tf.negative(error)
+        train_op = tf.train.RMSPropOptimizer(self._learning_rate,
+            decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
+        error_op = tf.abs(loss, name='abs_error')
         return error_op, train_op
 
     def evaluate(self, sess, env, num_episode):

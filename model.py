@@ -103,3 +103,39 @@ def create_model(window, input_shape, num_actions, model_name, create_network_fn
             'action': action,
         }
     return model, parameter_list
+
+def create_distributional_model(window, input_shape, num_actions, model_name, create_network_fn, trainable):
+    N_atoms = 51
+    V_Max = 10.0
+    V_Min = - 10.0
+    Delta_z = (V_Max - V_Min)/(N_atoms - 1)
+    z_list = tf.constant([V_Min + i * Delta_z for i in range(N_atoms)],dtype=tf.float32)
+    z_list_broadcasted = tf.tile(tf.reshape(z_list,[1,N_atoms]), tf.constant([num_actions,1]))
+
+    """Create the Q-network model."""
+    with tf.name_scope(model_name):
+        input_frames = tf.placeholder(tf.float32, [None, input_shape[0],
+                        input_shape[1], window], name ='input_frames')
+        input_length = input_shape[0] * input_shape[1] * window
+        q_distributional_network, parameter_list = create_network_fn(
+            input_frames, input_length, num_actions*N_atoms, trainable)
+        q_distributional_network = tf.reshape(q_distributional_network, [-1, num_actions, N_atoms])
+        # batch_size * num_actions * N_atoms
+        q_distributional_network = tf.nn.softmax(q_distributional_network, dim = 2)
+        # Clipping to prevent NaN
+        q_distributional_network = tf.clip_by_value(q_distributional_network, 1e-8, 1.0-1e-8)
+
+        # get q_network by expectation of q_distributional_network
+        q_network =  tf.multiply(q_distributional_network, z_list_broadcasted)
+        q_network = tf.reduce_sum(q_network, axis=2, name='q_values')
+        mean_max_Q = tf.reduce_mean( tf.reduce_max(q_network, axis=[1]), name='mean_max_Q')
+        action = tf.argmax(q_network, axis=1)
+
+        model = {
+            'q_distributional_network': q_distributional_network,
+            'q_values': q_network,
+            'input_frames': input_frames,
+            'mean_max_Q': mean_max_Q,
+            'action': action,
+        }
+    return model, parameter_list

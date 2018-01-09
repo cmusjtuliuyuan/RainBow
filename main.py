@@ -8,7 +8,7 @@ import PIL
 from batchEnv import BatchEnvironment
 from replayMemory import ReplayMemory, PriorityExperienceReplay
 from policy import GreedyPolicy, LinearDecayGreedyEpsilonPolicy, UniformRandomPolicy
-from model import create_deep_q_network, create_duel_q_network, create_model
+from model import create_deep_q_network, create_duel_q_network, create_model, create_distributional_model
 from agent import DQNAgent
 
 NUM_FRAME_PER_ACTION = 4
@@ -64,7 +64,7 @@ def main():
                                 'Whether use duel DQN, 0 means no, 1 means yes.')
     parser.add_argument('--is_double', default=1, type = int, help=
                                 'Whether use double DQN, 0 means no, 1 means yes.')
-    parser.add_argument('--is_per', default=1, type = int, help=
+    parser.add_argument('--is_per', default=0, type = int, help=
                                 'Whether use PriorityExperienceReplay, 0 means no, 1 means yes.')
 
 
@@ -98,9 +98,9 @@ def main():
 
 
     create_network_fn = create_deep_q_network if args.is_duel == 0 else create_duel_q_network
-    online_model, online_params = create_model(args.window_size, args.input_shape, num_actions,
+    online_model, online_params = create_distributional_model(args.window_size, args.input_shape, num_actions,
                     'online_model', create_network_fn, trainable=True)
-    target_model, target_params = create_model(args.window_size, args.input_shape, num_actions,
+    target_model, target_params = create_distributional_model(args.window_size, args.input_shape, num_actions,
                     'target_model', create_network_fn, trainable=False)
     update_target_params_ops = [t.assign(s) for s, t in zip(online_params, target_params)]
 
