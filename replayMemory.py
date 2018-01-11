@@ -65,9 +65,10 @@ class PriorityExperienceReplay:
     def _getPriority(self, error):
         return (error + self.e) ** self.a
 
-    def append(self, old_state, action, reward, new_state, is_terminal, error):
-        for o_s, a, r, n_s, i_t, e in zip(old_state, action, reward, new_state, is_terminal, error):
-            p = self._getPriority(e)
+    def append(self, old_state, action, reward, new_state, is_terminal):
+        for o_s, a, r, n_s, i_t in zip(old_state, action, reward, new_state, is_terminal):
+            # 0.5 is the maximum error
+            p = self._getPriority(0.5)
             self.tree.add(p, data=(o_s, a, r, n_s, i_t)) 
 
     def sample(self, batch_size, indexes=None):

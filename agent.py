@@ -196,7 +196,7 @@ class DQNAgent:
                   + Q_distributional_chosen_by_action_target * b_minus_l * \
                     tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online, u_id))
             error = tf.reduce_sum(error, axis=1)
-            
+
             if self._is_per == 1:
                 loss = tf.negative(error * loss_weight_ph)
             else:
@@ -270,12 +270,7 @@ class DQNAgent:
             # Clip the reward to -1, 0, 1
             reward = np.sign(reward)
 
-            # TODO error and next_action can be combined together
-            if self._is_per==1:
-                error = self._get_error(sess, old_state, action, reward, new_state, is_terminal)
-                self._memory.append(old_state, action, reward, new_state, is_terminal, error)
-            else:
-                self._memory.append(old_state, action, reward, new_state, is_terminal)
+            self._memory.append(old_state, action, reward, new_state, is_terminal)
 
             next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
             env.take_action(next_action)
