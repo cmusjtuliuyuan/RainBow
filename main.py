@@ -64,8 +64,10 @@ def main():
                                 'Whether use duel DQN, 0 means no, 1 means yes.')
     parser.add_argument('--is_double', default=1, type = int, help=
                                 'Whether use double DQN, 0 means no, 1 means yes.')
-    parser.add_argument('--is_per', default=0, type = int, help=
+    parser.add_argument('--is_per', default=1, type = int, help=
                                 'Whether use PriorityExperienceReplay, 0 means no, 1 means yes.')
+    parser.add_argument('--is_distributional', default=1, type = int, help=
+                                'Whether use distributional DQN, 0 means no, 1 means yes.')
 
 
     args = parser.parse_args()
@@ -96,14 +98,14 @@ def main():
         'evaluate_policy': GreedyPolicy(),
     }
 
-
     create_network_fn = create_deep_q_network if args.is_duel == 0 else create_duel_q_network
-    online_model, online_params = create_distributional_model(args.window_size, args.input_shape, num_actions,
+    create_model_fn = create_model if args.is_distributional == 0 else create_distributional_model
+
+    online_model, online_params = create_model_fn(args.window_size, args.input_shape, num_actions,
                     'online_model', create_network_fn, trainable=True)
-    target_model, target_params = create_distributional_model(args.window_size, args.input_shape, num_actions,
+    target_model, target_params = create_model_fn(args.window_size, args.input_shape, num_actions,
                     'target_model', create_network_fn, trainable=False)
     update_target_params_ops = [t.assign(s) for s, t in zip(online_params, target_params)]
-
 
 
     agent = DQNAgent(online_model,
@@ -117,6 +119,7 @@ def main():
                     args.batch_size,
                     args.is_double,
                     args.is_per,
+                    args.is_distributional,
                     args.learning_rate,
                     RMSP_DECAY,
                     RMSP_MOMENTUM,

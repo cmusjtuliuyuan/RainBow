@@ -33,6 +33,7 @@ class DQNAgent:
                  batch_size,
                  is_double_dqn,
                  is_per,
+                 is_distributional,
                  learning_rate,
                  rmsp_decay,
                  rmsp_momentum,
@@ -48,6 +49,7 @@ class DQNAgent:
         self._batch_size = batch_size
         self._is_double_dqn = is_double_dqn
         self._is_per = is_per
+        self._is_distributional = is_distributional
         self._learning_rate = learning_rate
         self._rmsp_decay = rmsp_decay
         self._rmsp_momentum = rmsp_momentum
@@ -60,9 +62,9 @@ class DQNAgent:
         self._reward_ph = tf.placeholder(tf.float32, name='reward_ph')
         self._is_terminal_ph = tf.placeholder(tf.float32, name='is_terminal_ph')
         self._action_chosen_by_online_ph = tf.placeholder(tf.int32, [None, 2], name ='action_chosen_by_online_ph')
-        self._huber_loss_weight_ph = tf.placeholder(tf.float32, name='huber_loss_weight_ph')
+        self._loss_weight_ph = tf.placeholder(tf.float32, name='loss_weight_ph')
         self._error_op, self._train_op = self._get_error_and_train_op(self._reward_ph,
-                self._is_terminal_ph, self._action_ph, self._action_chosen_by_online_ph, self._huber_loss_weight_ph)
+                self._is_terminal_ph, self._action_ph, self._action_chosen_by_online_ph, self._loss_weight_ph)
 
 
     def calc_q_values(self, sess, state, model):
@@ -101,7 +103,7 @@ class DQNAgent:
                                is_terminal_ph,
                                action_ph,
                                action_chosen_by_online_ph,
-                               huber_loss_weight_ph):
+                               loss_weight_ph):
         """Select the action based on the current state.
         Inputs
         --------
@@ -115,77 +117,95 @@ class DQNAgent:
         train operation
         """
         # calculate y_j
+        if self._is_distributional == 0:
+            #This part is for DQN without distributional
+            Q_values_target = self._target_model['q_values']
+            Q_values_online = self._online_model['q_values']
 
-        Q_values_target = self._target_model['q_values']
-        Q_values_online = self._online_model['q_values']
+            if self._is_double_dqn:
+                max_q = tf.gather_nd(Q_values_target, action_chosen_by_online_ph)
+            else:
+                max_q = tf.reduce_max(Q_values_target, axis = 1)
+            target = reward_ph + (1.0 - is_terminal_ph) * self._gamma * max_q
+            gathered_outputs = tf.gather_nd(Q_values_online, action_ph, name='gathered_outputs')
 
-        '''
-        if self._is_double_dqn:
-            max_q = tf.gather_nd(Q_values_target, action_chosen_by_online_ph)
+            if self._is_per == 1:
+                loss = weighted_huber_loss(target, gathered_outputs, loss_weight_ph)
+            else:
+                loss = mean_huber_loss(target, gathered_outputs)
+
+            train_op = tf.train.RMSPropOptimizer(self._learning_rate,
+                decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
+            error_op = tf.abs(gathered_outputs - target, name='abs_error')
+            return error_op, train_op
         else:
-            max_q = tf.reduce_max(Q_values_target, axis = 1)
-        #This part is for DQN without distributional
-        target = reward_ph + (1.0 - is_terminal_ph) * self._gamma * max_q
-        gathered_outputs = tf.gather_nd(Q_values_online, action_ph, name='gathered_outputs')
+            #This part is for distributional DQN
+            N_atoms = 51
+            V_Max = 10.0
+            V_Min = - 10.0
+            Delta_z = (V_Max - V_Min)/(N_atoms - 1)
+            z_list = tf.constant([V_Min + i * Delta_z for i in range(N_atoms)],dtype=tf.float32)
+            # batch_size * number_actions * N_atoms
+            Q_distributional_values_target = self._target_model['q_distributional_network']
+            # batch_size * N_atoms
+            tmp_batch_size = tf.shape(Q_distributional_values_target)[0]
+            if self._is_double_dqn:
+                Q_distributional_chosen_by_action_target = tf.gather_nd(Q_distributional_values_target,
+                                                action_chosen_by_online_ph)
+            else:
+                action_chosen_by_target_Q = tf.cast(tf.argmax(self._target_model['q_values'], axis=1), tf.int32)
+                Q_distributional_chosen_by_action_target = tf.gather_nd(Q_distributional_values_target,
+                    tf.concat([tf.reshape(tf.range(tmp_batch_size), [-1, 1]),
+                               tf.reshape(action_chosen_by_target_Q,[-1,1])], axis = 1))
 
-        if self._is_per == 1:
-            loss = weighted_huber_loss(target, gathered_outputs, huber_loss_weight_ph)
-        else:
-            loss = mean_huber_loss(target, gathered_outputs)
+            # batch_size * N_atoms
+            target = tf.tile(tf.reshape(reward_ph,[-1, 1]), tf.constant([1, N_atoms])) \
+                    + self._gamma * tf.multiply(tf.reshape(z_list,[1,N_atoms]),
+                      (1.0 - tf.tile(tf.reshape(is_terminal_ph ,[-1, 1]), tf.constant([1, N_atoms]))))
+            target = tf.clip_by_value(target, V_Min, V_Max)
+            b = (target - V_Min) / Delta_z
+            u, l = tf.ceil(b), tf.floor(b)
+            u_id, l_id = tf.cast(u, tf.int32), tf.cast(l, tf.int32)
+            u_minus_b, b_minus_l = u - b, b - l
 
-        train_op = tf.train.RMSPropOptimizer(self._learning_rate,
-            decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
-        error_op = tf.abs(gathered_outputs - target, name='abs_error')
-        return error_op, train_op
-        '''
+            Q_distributional_values_online = self._online_model['q_distributional_network']
+            # batch_size * N_atoms
+            Q_distributional_chosen_by_action_online = tf.gather_nd(Q_distributional_values_online,
+                                                action_ph)
+            '''
+            error = tf.zeros(shape=[tmp_batch_size],dtype=tf.float32)
+            # TODO this step can be simplifed!
+            for j in range(N_atoms):
+                error = error + Q_distributional_chosen_by_action_target[:, j] * (\
+                        u_minus_b[:, j] * \
+                        tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
+                         tf.concat([tf.reshape(tf.range(tmp_batch_size), [-1, 1]),
+                            tf.reshape(l_id[:, j],[-1,1])], axis = 1))) \
+                        +\
+                        b_minus_l[:, j] * \
+                        tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
+                         tf.concat([tf.reshape(tf.range(tmp_batch_size), [-1, 1]),
+                            tf.reshape(u_id[:, j],[-1,1])], axis = 1))))
+            '''
+            index_help = tf.tile(tf.reshape(tf.range(tmp_batch_size),[-1, 1]), tf.constant([1, N_atoms])) 
+            index_help = tf.expand_dims(index_help, -1)
+            u_id = tf.concat([index_help, tf.expand_dims(u_id, -1)], axis=2)
+            l_id = tf.concat([index_help, tf.expand_dims(l_id, -1)], axis=2)
+            error = Q_distributional_chosen_by_action_target * u_minus_b * \
+                    tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online, l_id)) \
+                  + Q_distributional_chosen_by_action_target * b_minus_l * \
+                    tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online, u_id))
+            error = tf.reduce_sum(error, axis=1)
+            
+            if self._is_per == 1:
+                loss = tf.negative(error * loss_weight_ph)
+            else:
+                loss = tf.negative(error)
 
-        #This part is for distributional DQN
-        N_atoms = 51
-        V_Max = 10.0
-        V_Min = - 10.0
-        Delta_z = (V_Max - V_Min)/(N_atoms - 1)
-        z_list = tf.constant([V_Min + i * Delta_z for i in range(N_atoms)],dtype=tf.float32)
-        # batch_size * number_actions * N_atoms
-        Q_distributional_values_target = self._target_model['q_distributional_network']
-        # batch_size * N_atoms
-        # TODO and no double support
-        Q_distributional_chosen_by_action_target = tf.gather_nd(Q_distributional_values_target,
-                                            action_chosen_by_online_ph)
-        # batch_size * N_atoms
-        target = tf.tile(tf.reshape(reward_ph,[-1, 1]), tf.constant([1, N_atoms])) \
-                + self._gamma * tf.multiply(tf.reshape(z_list,[1,N_atoms]),
-                  (1.0 - tf.tile(tf.reshape(is_terminal_ph ,[-1, 1]), tf.constant([1, N_atoms]))))
-        target = tf.clip_by_value(target, V_Min, V_Max)
-        b = (target - V_Min) / Delta_z
-        u, l = tf.ceil(b), tf.floor(b)
-        u_id, l_id = tf.cast(u, tf.int32), tf.cast(l, tf.int32)
-        u_minus_b = u - b
-        b_minus_l = b - l
-
-        Q_distributional_values_online = self._online_model['q_distributional_network']
-        # batch_size * N_atoms
-        Q_distributional_chosen_by_action_online = tf.gather_nd(Q_distributional_values_online,
-                                            action_ph)
-        error = tf.zeros(shape=[self._batch_size],dtype=tf.float32)
-        #m = tf.multiply(Q_distributional_chosen_by_action_target, u_minus_b)\
-        #     + tf.multiply(Q_distributional_chosen_by_action_target, b_minus_u)
-        for j in range(N_atoms):
-            error = error + Q_distributional_chosen_by_action_target[:, j] * (\
-                    u_minus_b[:, j] * \
-                    tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
-                     tf.concat([tf.reshape(tf.range(self._batch_size), [-1, 1]),
-                        tf.reshape(l_id[:, j],[-1,1])], axis = 1))) \
-                    +\
-                    b_minus_l[:, j] * \
-                    tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
-                     tf.concat([tf.reshape(tf.range(self._batch_size), [-1, 1]),
-                        tf.reshape(u_id[:, j],[-1,1])], axis = 1))))
-
-        loss = tf.negative(error)
-        train_op = tf.train.RMSPropOptimizer(self._learning_rate,
-            decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
-        error_op = tf.abs(loss, name='abs_error')
-        return error_op, train_op
+            train_op = tf.train.RMSPropOptimizer(self._learning_rate,
+                decay=self._rmsp_decay, momentum=self._rmsp_momentum, epsilon=self._rmsp_epsilon).minimize(loss)
+            error_op = tf.abs(error, name='abs_error')
+            return error_op, train_op
 
     def evaluate(self, sess, env, num_episode):
         """Evaluate num_episode games by online model.
@@ -285,7 +305,7 @@ class DQNAgent:
 
                     if self._is_per == 1:
                         # Annealing weight beta
-                        feed_dict[self._huber_loss_weight_ph] = (np.array(p_list)*count/sum_p)**(-self._beta)
+                        feed_dict[self._loss_weight_ph] = (np.array(p_list)*count/sum_p)**(-self._beta)
                         error, _ = sess.run([self._error_op, self._train_op], feed_dict=feed_dict)
                         self._memory.update(idx_list, error)
                     else:
@@ -300,7 +320,7 @@ class DQNAgent:
 
     def _get_error(self, sess, old_state, action, reward, new_state, is_terminal):
         '''
-        Get error for Prioritized Experience Replay
+        Get TD error for Prioritized Experience Replay
         '''
         feed_dict = {self._target_model['input_frames']: new_state.astype(np.float32)/255.0,
                      self._online_model['input_frames']: old_state.astype(np.float32)/255.0,
