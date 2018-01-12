@@ -6,6 +6,11 @@ from PIL import Image
 import random
 from huberLoss import mean_huber_loss, weighted_huber_loss
 
+EPSILON_BEGIN = 1.0
+EPSILON_END = 0.1
+BETA_BEGIN = 0.5
+BETA_END = 1.0
+
 class DQNAgent:
     """Class implementing DQN.
     Parameters
@@ -25,7 +30,7 @@ class DQNAgent:
                  online_model,
                  target_model,
                  memory,
-                 policies,
+                 num_actions,
                  gamma,
                  update_freq,
                  target_update_freq,
@@ -42,7 +47,7 @@ class DQNAgent:
         self._online_model = online_model
         self._target_model = target_model
         self._memory = memory
-        self._policies = policies
+        self._num_actions = num_actions
         self._gamma = gamma
         self._update_freq = update_freq
         self._target_update_freq = target_update_freq
@@ -57,9 +62,10 @@ class DQNAgent:
         self._rmsp_momentum = rmsp_momentum
         self._rmsp_epsilon = rmsp_epsilon
         self._update_times = 0
-        self._beta = 0.5
-        self._beta_increment = (1.0-0.5)/(5000000*0.8)
-
+        self._beta = EPSILON_BEGIN
+        self._beta_increment = (EPSILON_END-BETA_BEGIN)/2000000.0
+        self._epsilon = EPSILON_BEGIN
+        self._epsilon_increment = (EPSILON_END - EPSILON_BEGIN)/2000000.0
         self._action_ph = tf.placeholder(tf.int32, [None, 2], name ='action_ph')
         self._reward_ph = tf.placeholder(tf.float32, name='reward_ph')
         self._is_terminal_ph = tf.placeholder(tf.float32, name='is_terminal_ph')
@@ -69,26 +75,20 @@ class DQNAgent:
                 self._is_terminal_ph, self._action_ph, self._action_chosen_by_online_ph, self._loss_weight_ph)
 
 
-    def calc_q_values(self, sess, state, model):
-        """Given a state (or batch of states) calculate the Q-values.
-        Return
-        ------
-        Q-values for the state(s)
-        """
-        state = state.astype(np.float32) / 255.0
-        feed_dict = {model['input_frames']: state}
-        q_values = sess.run(model['q_values'], feed_dict=feed_dict)
-        return q_values
-
-
-    def select_action(self, sess, state, policy, model):
+    def select_action(self, sess, state, epsilon, model):
         """Select the action based on the current state.
         Returns
         --------
         selected action(s)
         """
-        q_values = self.calc_q_values(sess, state, model)
-        return policy.select_action(q_values=q_values)
+        batch_size = len(state)
+        if np.random.rand() < epsilon:
+            action = np.random.randint(0, self._num_actions, size=(batch_size,))
+        else:
+            state = state.astype(np.float32) / 255.0
+            feed_dict = {model['input_frames']: state}
+            action = sess.run(model['action'], feed_dict=feed_dict)
+        return action
 
     def get_mean_max_Q(self, sess, samples):
         mean_max = []
@@ -217,8 +217,7 @@ class DQNAgent:
 
         while num_finished_episode < num_episode:
             old_state, action, reward, new_state, is_terminal = env.get_state()
-            action = self.select_action(sess, new_state,
-                        self._policies['evaluate_policy'], self._online_model)
+            action = self.select_action(sess, new_state, 0, self._online_model)
             env.take_action(action)
             for i, r, is_t in zip(range(num_environment), reward, is_terminal):
                 if not is_t:
@@ -229,12 +228,12 @@ class DQNAgent:
                     num_finished_episode += 1
         return np.mean(rewards_list), np.std(rewards_list)
 
-    def get_multi_step_sample(self, env, sess, num_step):
+    def get_multi_step_sample(self, env, sess, num_step, epsilon):
         old_state, action, reward, new_state, is_terminal = env.get_state()
         # Clip the reward to -1, 0, 1
         total_reward = np.sign(reward)
         total_is_terminal = is_terminal
-        next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
+        next_action = self.select_action(sess, new_state, epsilon, self._online_model)
         env.take_action(next_action)
 
         for i in range(1, num_step):
@@ -242,7 +241,7 @@ class DQNAgent:
             # Clip the reward to -1, 0, 1
             total_reward = total_reward + self._gamma**i * np.sign(reward)
             total_is_terminal = total_is_terminal + is_terminal
-            next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
+            next_action = self.select_action(sess, new_state, epsilon, self._online_model)
             env.take_action(next_action)
 
         return old_state, action, total_reward, new_state, np.sign(total_is_terminal)
@@ -271,10 +270,13 @@ class DQNAgent:
         env.reset()
 
         for t in range(0, num_iterations, num_environment):
-
-            old_state, action, reward, new_state, is_terminal = self.get_multi_step_sample(env, sess, self._num_step)
+            # Prepare sample
+            old_state, action, reward, new_state, is_terminal = \
+                self.get_multi_step_sample(env, sess, self._num_step, self._epsilon)
             self._memory.append(old_state, action, reward, new_state, is_terminal)
-
+            # Update epsilon
+            if self._epsilon > EPSILON_END:
+                self._epsilon += num_environment * self._epsilon_increment
             #If train, first decide how many batch update to do, then train.
             if do_train:
                 num_update = sum([1 if i%self._update_freq == 0 else 0 for i in range(t, t+num_environment)])
@@ -307,7 +309,7 @@ class DQNAgent:
                         sess.run(self._train_op, feed_dict=feed_dict)
 
                     self._update_times += 1
-                    if self._beta < 1:
+                    if self._beta < BETA_END:
                         self._beta += self._beta_increment
 
                     if self._update_times%self._target_update_freq == 0:

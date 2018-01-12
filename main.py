@@ -7,7 +7,6 @@ import PIL
 
 from batchEnv import BatchEnvironment
 from replayMemory import ReplayMemory, PriorityExperienceReplay
-from policy import GreedyPolicy, LinearDecayGreedyEpsilonPolicy, UniformRandomPolicy
 from model import create_deep_q_network, create_duel_q_network, create_model, create_distributional_model
 from agent import DQNAgent
 
@@ -93,11 +92,6 @@ def main():
     else:
         replay_memory = ReplayMemory(REPLAYMEMORY_SIZE, args.window_size, args.input_shape)
 
-    policies = {
-        # TODO check policy
-        'train_policy': LinearDecayGreedyEpsilonPolicy(1, args.epsilon, LINEAR_DECAY_LENGTH*args.num_step),
-        'evaluate_policy': GreedyPolicy(),
-    }
 
     create_network_fn = create_deep_q_network if args.is_duel == 0 else create_duel_q_network
     create_model_fn = create_model if args.is_distributional == 0 else create_distributional_model
@@ -112,7 +106,7 @@ def main():
     agent = DQNAgent(online_model,
                     target_model,
                     replay_memory,
-                    policies,
+                    num_actions,
                     args.gamma,
                     UPDATE_FREQUENCY,
                     TARGET_UPDATE_FREQENCY,
