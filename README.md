@@ -1,12 +1,24 @@
 # RainBow
-RainBow, Tensorflow
 
-DQN done
+The OpenAI Gym can be paralleled by the bathEnv.py, which makes the training faster.
 
-Double DQN done
+#RainBow: https://arxiv.org/abs/1710.02298
 
-Duel DQN done
+#DQN done: https://web.stanford.edu/class/psych209/Readings/MnihEtAlHassibis15NatureControlDeepRL.pdf
 
-PER DQN done
+#Double DQN done: https://arxiv.org/abs/1509.06461
 
-Distributional DQN done
+#Duel DQN done: https://arxiv.org/abs/1511.06581
+
+DQN, Double DQN, and Duel DQN parts are implemented by Ben and me. https://github.com/bparr/10703
+
+#PER DQN done: https://arxiv.org/abs/1511.05952
+
+Thanks to: https://jaromiru.com/2016/11/07/lets-make-a-dqn-double-learning-and-prioritized-experience-replay/#fn-444-2
+
+#Distributional DQN done: https://arxiv.org/abs/1707.06887
+
+The best and most concise implement in Tensorflow by far in the world!!!
+Better than all others' Tensorflow implements that I can find.
+
+#Multi-step done

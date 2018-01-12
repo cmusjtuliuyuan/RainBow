@@ -34,6 +34,7 @@ class DQNAgent:
                  is_double_dqn,
                  is_per,
                  is_distributional,
+                 num_step,
                  learning_rate,
                  rmsp_decay,
                  rmsp_momentum,
@@ -50,6 +51,7 @@ class DQNAgent:
         self._is_double_dqn = is_double_dqn
         self._is_per = is_per
         self._is_distributional = is_distributional
+        self._num_step = num_step
         self._learning_rate = learning_rate
         self._rmsp_decay = rmsp_decay
         self._rmsp_momentum = rmsp_momentum
@@ -126,7 +128,7 @@ class DQNAgent:
                 max_q = tf.gather_nd(Q_values_target, action_chosen_by_online_ph)
             else:
                 max_q = tf.reduce_max(Q_values_target, axis = 1)
-            target = reward_ph + (1.0 - is_terminal_ph) * self._gamma * max_q
+            target = reward_ph + (1.0 - is_terminal_ph) * (self._gamma**self._num_step) * max_q
             gathered_outputs = tf.gather_nd(Q_values_online, action_ph, name='gathered_outputs')
 
             if self._is_per == 1:
@@ -160,7 +162,7 @@ class DQNAgent:
 
             # batch_size * N_atoms
             target = tf.tile(tf.reshape(reward_ph,[-1, 1]), tf.constant([1, N_atoms])) \
-                    + self._gamma * tf.multiply(tf.reshape(z_list,[1,N_atoms]),
+                    + (self._gamma**self._num_step) * tf.multiply(tf.reshape(z_list,[1,N_atoms]),
                       (1.0 - tf.tile(tf.reshape(is_terminal_ph ,[-1, 1]), tf.constant([1, N_atoms]))))
             target = tf.clip_by_value(target, V_Min, V_Max)
             b = (target - V_Min) / Delta_z
@@ -172,21 +174,7 @@ class DQNAgent:
             # batch_size * N_atoms
             Q_distributional_chosen_by_action_online = tf.gather_nd(Q_distributional_values_online,
                                                 action_ph)
-            '''
-            error = tf.zeros(shape=[tmp_batch_size],dtype=tf.float32)
-            # TODO this step can be simplifed!
-            for j in range(N_atoms):
-                error = error + Q_distributional_chosen_by_action_target[:, j] * (\
-                        u_minus_b[:, j] * \
-                        tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
-                         tf.concat([tf.reshape(tf.range(tmp_batch_size), [-1, 1]),
-                            tf.reshape(l_id[:, j],[-1,1])], axis = 1))) \
-                        +\
-                        b_minus_l[:, j] * \
-                        tf.log(tf.gather_nd(Q_distributional_chosen_by_action_online,
-                         tf.concat([tf.reshape(tf.range(tmp_batch_size), [-1, 1]),
-                            tf.reshape(u_id[:, j],[-1,1])], axis = 1))))
-            '''
+
             index_help = tf.tile(tf.reshape(tf.range(tmp_batch_size),[-1, 1]), tf.constant([1, N_atoms])) 
             index_help = tf.expand_dims(index_help, -1)
             u_id = tf.concat([index_help, tf.expand_dims(u_id, -1)], axis=2)
@@ -241,6 +229,23 @@ class DQNAgent:
                     num_finished_episode += 1
         return np.mean(rewards_list), np.std(rewards_list)
 
+    def get_multi_step_sample(self, env, sess, num_step):
+        old_state, action, reward, new_state, is_terminal = env.get_state()
+        # Clip the reward to -1, 0, 1
+        total_reward = np.sign(reward)
+        total_is_terminal = is_terminal
+        next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
+        env.take_action(next_action)
+
+        for i in range(1, num_step):
+            _ , _ , reward, new_state, is_terminal = env.get_state()
+            # Clip the reward to -1, 0, 1
+            total_reward = total_reward + self._gamma**i * np.sign(reward)
+            total_is_terminal = total_is_terminal + is_terminal
+            next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
+            env.take_action(next_action)
+
+        return old_state, action, total_reward, new_state, np.sign(total_is_terminal)
 
     def fit(self, sess, env, num_iterations, do_train=True):
         """Fit your model to the provided batched environment.
@@ -266,14 +271,9 @@ class DQNAgent:
         env.reset()
 
         for t in range(0, num_iterations, num_environment):
-            old_state, action, reward, new_state, is_terminal = env.get_state()
-            # Clip the reward to -1, 0, 1
-            reward = np.sign(reward)
 
+            old_state, action, reward, new_state, is_terminal = self.get_multi_step_sample(env, sess, self._num_step)
             self._memory.append(old_state, action, reward, new_state, is_terminal)
-
-            next_action = self.select_action(sess, new_state, self._policies['train_policy'], self._online_model)
-            env.take_action(next_action)
 
             #If train, first decide how many batch update to do, then train.
             if do_train:

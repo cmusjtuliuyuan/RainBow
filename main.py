@@ -68,6 +68,8 @@ def main():
                                 'Whether use PriorityExperienceReplay, 0 means no, 1 means yes.')
     parser.add_argument('--is_distributional', default=1, type = int, help=
                                 'Whether use distributional DQN, 0 means no, 1 means yes.')
+    parser.add_argument('--num_step', default=3, type = int, help=
+                                'Num Step for multi-step DQN, 3 is recommended')
 
 
     args = parser.parse_args()
@@ -83,7 +85,6 @@ def main():
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-
     batch_environment = BatchEnvironment(args.env, args.num_process,
                 args.window_size, args.input_shape, NUM_FRAME_PER_ACTION, MAX_EPISODE_LENGTH)
 
@@ -94,7 +95,7 @@ def main():
 
     policies = {
         # TODO check policy
-        'train_policy': LinearDecayGreedyEpsilonPolicy(1, args.epsilon, LINEAR_DECAY_LENGTH),
+        'train_policy': LinearDecayGreedyEpsilonPolicy(1, args.epsilon, LINEAR_DECAY_LENGTH*args.num_step),
         'evaluate_policy': GreedyPolicy(),
     }
 
@@ -120,6 +121,7 @@ def main():
                     args.is_double,
                     args.is_per,
                     args.is_distributional,
+                    args.num_step,
                     args.learning_rate,
                     RMSP_DECAY,
                     RMSP_MOMENTUM,
