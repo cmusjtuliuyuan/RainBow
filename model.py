@@ -106,8 +106,8 @@ def create_model(window, input_shape, num_actions, model_name, create_network_fn
 
 def create_distributional_model(window, input_shape, num_actions, model_name, create_network_fn, trainable):
     N_atoms = 51
-    V_Max = 10.0
-    V_Min = - 10.0
+    V_Max = 20.0
+    V_Min = 0.0
     Delta_z = (V_Max - V_Min)/(N_atoms - 1)
     z_list = tf.constant([V_Min + i * Delta_z for i in range(N_atoms)],dtype=tf.float32)
     z_list_broadcasted = tf.tile(tf.reshape(z_list,[1,N_atoms]), tf.constant([num_actions,1]))

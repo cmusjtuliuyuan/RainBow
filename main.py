@@ -67,7 +67,7 @@ def main():
                                 'Whether use PriorityExperienceReplay, 0 means no, 1 means yes.')
     parser.add_argument('--is_distributional', default=1, type = int, help=
                                 'Whether use distributional DQN, 0 means no, 1 means yes.')
-    parser.add_argument('--num_step', default=3, type = int, help=
+    parser.add_argument('--num_step', default=1, type = int, help=
                                 'Num Step for multi-step DQN, 3 is recommended')
 
 
