@@ -2,6 +2,18 @@
 
 The OpenAI Gym can be paralleled by the bathEnv.py, which makes the training faster.
 
+You can use the following command to choose which DQN to use:
+
+```
+python main.py --is_double 1 --is_duel 1 --is_per 1 --is_distributional 1 --is_noisy 1 --num_step 3
+```
+
+The output looks like:
+
+```
+Number_of_frame    mean_max_Q    average_reward    variance_reward
+```
+
 ### RainBow:
 
 https://arxiv.org/abs/1710.02298
