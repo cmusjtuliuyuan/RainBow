@@ -34,3 +34,9 @@ The best and most concise implement of Distributional RL loss function in Tensor
 Better and faster than all others' implements that I can find.
 
 ### Multi-step done
+
+### NoisyNet done
+
+https://arxiv.org/pdf/1706.10295.pdf
+
+Thanks to: https://github.com/andrewliao11/NoisyNet-DQN/blob/master/tf_util.py

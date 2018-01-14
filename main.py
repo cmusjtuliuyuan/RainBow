@@ -69,6 +69,8 @@ def main():
                                 'Whether use distributional DQN, 0 means no, 1 means yes.')
     parser.add_argument('--num_step', default=1, type = int, help=
                                 'Num Step for multi-step DQN, 3 is recommended')
+    parser.add_argument('--is_noisy', default=1, type = int, help=
+                                'Whether use NoisyNet, 0 means no, 1 means yes.')
 
 
     args = parser.parse_args()
@@ -95,11 +97,11 @@ def main():
 
     create_network_fn = create_deep_q_network if args.is_duel == 0 else create_duel_q_network
     create_model_fn = create_model if args.is_distributional == 0 else create_distributional_model
-
+    noisy = True if args.is_noisy==1 else False
     online_model, online_params = create_model_fn(args.window_size, args.input_shape, num_actions,
-                    'online_model', create_network_fn, trainable=True)
+                    'online_model', create_network_fn, trainable=True, noisy=noisy)
     target_model, target_params = create_model_fn(args.window_size, args.input_shape, num_actions,
-                    'target_model', create_network_fn, trainable=False)
+                    'target_model', create_network_fn, trainable=False, noisy=noisy)
     update_target_params_ops = [t.assign(s) for s, t in zip(online_params, target_params)]
 
 
@@ -116,6 +118,7 @@ def main():
                     args.is_per,
                     args.is_distributional,
                     args.num_step,
+                    args.is_noisy,
                     args.learning_rate,
                     RMSP_DECAY,
                     RMSP_MOMENTUM,

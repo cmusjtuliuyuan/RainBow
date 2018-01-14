@@ -1,6 +1,7 @@
 """Q-networks"""
 
 import tensorflow as tf
+import numpy as np
 
 # Returns tuple of flat output, flat output size, network_parameters.
 def create_conv_network(input_frames, trainable):
@@ -29,69 +30,87 @@ def create_conv_network(input_frames, trainable):
 
 
 # Returns tuple of network, network_parameters.
-def create_deep_q_network(input_frames, input_length, num_actions, trainable):
+def create_deep_q_network(input_frames, input_length, num_actions, trainable, noisy):
     flat_output, flat_output_size, parameter_list = create_conv_network(input_frames, trainable)
-    fc1_W = tf.get_variable(shape=[flat_output_size, 256], name='fc1_W',
-        trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
-    fc1_b = tf.Variable(tf.zeros([256], dtype=tf.float32), name='fc1_b',
-        trainable=trainable)
-    # (batch size, 256)
-    output3 = tf.nn.relu(tf.matmul(flat_output, fc1_W) + fc1_b, name='output3')
+    if noisy == False:
+        fc1_W = tf.get_variable(shape=[flat_output_size, 256], name='fc1_W',
+            trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
+        fc1_b = tf.Variable(tf.zeros([256], dtype=tf.float32), name='fc1_b',
+            trainable=trainable)
+        # (batch size, 256)
+        output3 = tf.nn.relu(tf.matmul(flat_output, fc1_W) + fc1_b, name='output3')
 
-    fc2_W = tf.get_variable(shape=[256, num_actions], name='fc2_W',
-        trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
-    fc2_b = tf.Variable(tf.zeros([num_actions], dtype=tf.float32), name='fc2_b',
-        trainable=trainable)
-    # (batch size, num_actions)
-    q_network = tf.nn.relu(tf.matmul(output3, fc2_W) + fc2_b, name='q_network')
+        fc2_W = tf.get_variable(shape=[256, num_actions], name='fc2_W',
+            trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
+        fc2_b = tf.Variable(tf.zeros([num_actions], dtype=tf.float32), name='fc2_b',
+            trainable=trainable)
+        # (batch size, num_actions)
+        q_network = tf.nn.relu(tf.matmul(output3, fc2_W) + fc2_b, name='q_network')
 
-    parameter_list += [fc1_W, fc1_b, fc2_W, fc2_b]
+        parameter_list += [fc1_W, fc1_b, fc2_W, fc2_b]
+    else:
+        output3, parameter_list_output3 = noisy_dense(flat_output, name='noisy_fc1',
+            input_size=flat_output_size, output_size=256, activation_fn=tf.nn.relu, trainable=trainable)
+        q_network, parameter_list_q_network = noisy_dense(output3, name='noisy_fc2',
+            input_size=256, output_size=num_actions, trainable=trainable)
+        parameter_list += parameter_list_output3 + parameter_list_q_network
     return q_network, parameter_list
 
 
 # Returns tuple of network, network_parameters.
-def create_duel_q_network(input_frames, input_length, num_actions, trainable):
+def create_duel_q_network(input_frames, input_length, num_actions, trainable, noisy):
     flat_output, flat_output_size, parameter_list = create_conv_network(input_frames, trainable)
 
-    fcV_W = tf.get_variable(shape=[flat_output_size, 512], name='fcV_W',
-        trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
-    fcV_b = tf.Variable(tf.zeros([512], dtype=tf.float32), name='fcV_b',
-        dtype=tf.float32, trainable=trainable)
-    outputV = tf.nn.relu(tf.matmul(flat_output, fcV_W) + fcV_b, name='outputV')
+    if noisy==False:
+        fcV_W = tf.get_variable(shape=[flat_output_size, 512], name='fcV_W',
+            trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
+        fcV_b = tf.Variable(tf.zeros([512], dtype=tf.float32), name='fcV_b',
+            dtype=tf.float32, trainable=trainable)
+        outputV = tf.nn.relu(tf.matmul(flat_output, fcV_W) + fcV_b, name='outputV')
 
-    fcV2_W = tf.get_variable(shape=[512, 1], name='fcV2_W',
-        trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
-    fcV2_b = tf.Variable(tf.zeros([1], dtype=tf.float32), name='fcV2_b',
-        trainable=trainable)
-    outputV2 = tf.nn.relu(tf.matmul(outputV, fcV2_W) + fcV2_b, name='outputV2')
+        fcV2_W = tf.get_variable(shape=[512, 1], name='fcV2_W',
+            trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
+        fcV2_b = tf.Variable(tf.zeros([1], dtype=tf.float32), name='fcV2_b',
+            trainable=trainable)
+        outputV2 = tf.matmul(outputV, fcV2_W) + fcV2_b
 
 
-    fcA_W = tf.get_variable(shape=[flat_output_size, 512], name='fcA_W',
-        trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
-    fcA_b = tf.Variable(tf.zeros([512], dtype=tf.float32), name='fcA_b',
-        trainable=trainable)
-    outputA = tf.nn.relu(tf.matmul(flat_output, fcA_W) + fcA_b, name='outputA')
+        fcA_W = tf.get_variable(shape=[flat_output_size, 512], name='fcA_W',
+            trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
+        fcA_b = tf.Variable(tf.zeros([512], dtype=tf.float32), name='fcA_b',
+            trainable=trainable)
+        outputA = tf.nn.relu(tf.matmul(flat_output, fcA_W) + fcA_b, name='outputA')
 
-    fcA2_W = tf.get_variable(shape=[512, num_actions], name='fcA2_W',
-        trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
-    fcA2_b = tf.Variable(tf.zeros([num_actions], dtype=tf.float32), name='fcA2_b',
-        trainable=trainable)
-    outputA2 = tf.nn.relu(tf.matmul(outputA, fcA2_W) + fcA2_b, name='outputA2')
+        fcA2_W = tf.get_variable(shape=[512, num_actions], name='fcA2_W',
+            trainable=trainable, initializer=tf.contrib.layers.xavier_initializer())
+        fcA2_b = tf.Variable(tf.zeros([num_actions], dtype=tf.float32), name='fcA2_b',
+            trainable=trainable)
+        outputA2 = tf.matmul(outputA, fcA2_W) + fcA2_b
 
+        parameter_list += [fcV_W, fcV_b, fcV2_W, fcV2_b, fcA_W, fcA_b, fcA2_W, fcA2_b]
+    else:
+        outputV, parameter_list_outputV = noisy_dense(flat_output, name='fcV',
+            input_size=flat_output_size, output_size=512, trainable=trainable, activation_fn=tf.nn.relu)
+        outputV2, parameter_list_outputV2 = noisy_dense(outputV, name='fcV2',
+            input_size=512, output_size=1, trainable=trainable)
+        ouputA, parameter_list_outputA = noisy_dense(flat_output, name='fcA',
+            input_size=flat_output_size, output_size=512, trainable=trainable, activation_fn=tf.nn.relu)
+        outputA2, parameter_list_outputA2 = noisy_dense(ouputA, name='fcA2',
+            input_size=512, output_size=num_actions, trainable=trainable)
+        parameter_list += parameter_list_outputA+parameter_list_outputA2 +\
+                          parameter_list_outputV+parameter_list_outputV2
     q_network = tf.nn.relu(outputV2 + outputA2 - tf.reduce_mean(outputA2), name='q_network')
-    
-    parameter_list += [fcV_W, fcV_b, fcV2_W, fcV2_b, fcA_W, fcA_b, fcA2_W, fcA2_b]
     return q_network, parameter_list
 
 
-def create_model(window, input_shape, num_actions, model_name, create_network_fn, trainable):
+def create_model(window, input_shape, num_actions, model_name, create_network_fn, trainable, noisy):
     """Create the Q-network model."""
     with tf.variable_scope(model_name):
         input_frames = tf.placeholder(tf.float32, [None, input_shape[0],
                         input_shape[1], window], name ='input_frames')
         input_length = input_shape[0] * input_shape[1] * window
         q_network, parameter_list = create_network_fn(
-            input_frames, input_length, num_actions, trainable)
+            input_frames, input_length, num_actions, trainable, noisy)
 
         mean_max_Q = tf.reduce_mean( tf.reduce_max(q_network, axis=[1]), name='mean_max_Q')
         action = tf.argmax(q_network, axis=1)
@@ -104,7 +123,8 @@ def create_model(window, input_shape, num_actions, model_name, create_network_fn
         }
     return model, parameter_list
 
-def create_distributional_model(window, input_shape, num_actions, model_name, create_network_fn, trainable):
+def create_distributional_model(window, input_shape, num_actions,
+                model_name, create_network_fn, trainable, noisy):
     N_atoms = 51
     V_Max = 20.0
     V_Min = 0.0
@@ -118,7 +138,7 @@ def create_distributional_model(window, input_shape, num_actions, model_name, cr
                         input_shape[1], window], name ='input_frames')
         input_length = input_shape[0] * input_shape[1] * window
         q_distributional_network, parameter_list = create_network_fn(
-            input_frames, input_length, num_actions*N_atoms, trainable)
+            input_frames, input_length, num_actions*N_atoms, trainable, noisy)
         q_distributional_network = tf.reshape(q_distributional_network, [-1, num_actions, N_atoms])
         # batch_size * num_actions * N_atoms
         q_distributional_network = tf.nn.softmax(q_distributional_network, dim = 2)
@@ -139,3 +159,35 @@ def create_distributional_model(window, input_shape, num_actions, model_name, cr
             'action': action,
         }
     return model, parameter_list
+
+def noisy_dense(x, input_size, output_size, name, trainable, activation_fn=tf.identity):
+
+    # the function used in eq.7,8
+    def f(x):
+        return tf.multiply(tf.sign(x), tf.pow(tf.abs(x), 0.5))
+    # Initializer of \mu and \sigma
+    mu_init = tf.random_uniform_initializer(minval=-1*1/np.power(input_size, 0.5),
+                                                maxval=1*1/np.power(input_size, 0.5))
+    sigma_init = tf.constant_initializer(0.4/np.power(input_size, 0.5))
+    # Sample noise from gaussian
+    p = tf.random_normal([input_size, 1])
+    q = tf.random_normal([1, output_size])
+    f_p = f(p); f_q = f(q)
+    w_epsilon = f_p*f_q; b_epsilon = tf.squeeze(f_q)
+
+    # w = w_mu + w_sigma*w_epsilon
+    w_mu = tf.get_variable(name + "/w_mu", [input_size, output_size],
+            initializer=mu_init, trainable=trainable)
+    w_sigma = tf.get_variable(name + "/w_sigma", [input_size, output_size],
+            initializer=sigma_init, trainable=trainable)
+    w = w_mu + tf.multiply(w_sigma, w_epsilon)
+    ret = tf.matmul(x, w)
+
+    # b = b_mu + b_sigma*b_epsilon
+    b_mu = tf.get_variable(name + "/b_mu", [output_size],
+            initializer=mu_init, trainable=trainable)
+    b_sigma = tf.get_variable(name + "/b_sigma", [output_size],
+            initializer=sigma_init, trainable=trainable)
+    b = b_mu + tf.multiply(b_sigma, b_epsilon)
+    return activation_fn(ret + b), [w_mu, w_sigma, b_mu, b_sigma]
+
