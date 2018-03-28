@@ -26,10 +26,9 @@ class ReplayMemory:
         num_sample = len(old_state)
 
         if len(self._memory) >= self._max_size:
-            del(self._memory[0:num_sample])
+            del(self._memory[0])
 
-        for o_s, a, r, n_s, i_t in zip(old_state, action, reward, new_state, is_terminal):
-            self._memory.append((o_s, a, r, n_s, i_t))
+        self._memory.append((old_state, action, reward, new_state, is_terminal))
 
 
     def sample(self, batch_size, indexes=None):
@@ -66,10 +65,8 @@ class PriorityExperienceReplay:
         return (error + self.e) ** self.a
 
     def append(self, old_state, action, reward, new_state, is_terminal):
-        for o_s, a, r, n_s, i_t in zip(old_state, action, reward, new_state, is_terminal):
-            # 0.5 is the maximum error
-            p = self._getPriority(0.5)
-            self.tree.add(p, data=(o_s, a, r, n_s, i_t)) 
+        p = self._getPriority(0.5)
+        self.tree.add(p, data=(old_state, action, reward, new_state, is_terminal))
 
     def sample(self, batch_size, indexes=None):
         data_batch = []

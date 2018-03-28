@@ -5,7 +5,7 @@ import random
 import tensorflow as tf
 import PIL
 
-from batchEnv import BatchEnvironment
+from batchEnv import Environment
 from replayMemory import ReplayMemory, PriorityExperienceReplay
 from model import create_deep_q_network, create_duel_q_network, create_model, create_distributional_model
 from agent import DQNAgent
@@ -18,10 +18,8 @@ MAX_EPISODE_LENGTH = 100000
 RMSP_EPSILON = 0.01
 RMSP_DECAY = 0.95
 RMSP_MOMENTUM =0.95
-MAX_EPISODE_LENGTH = 100000
 NUM_FIXED_SAMPLES = 10000
 NUM_BURN_IN = 50000
-LINEAR_DECAY_LENGTH = 4000000
 NUM_EVALUATE_EPSIODE = 20
 
 def show_numpy_pillow(np_image):
@@ -30,16 +28,13 @@ def show_numpy_pillow(np_image):
 
 def get_fixed_samples(env, num_actions, num_samples):
     fixed_samples = []
-    num_environment = env.num_process
     env.reset()
-
-    for _ in range(0, num_samples, num_environment):
-        old_state, action, reward, new_state, is_terminal = env.get_state()
-        action = np.random.randint(0, num_actions, size=(num_environment,))
+    for _ in range(num_samples):
+        action = np.random.randint(0, num_actions)
         env.take_action(action)
-        for state in new_state:
-            fixed_samples.append(state)
-    return np.array(fixed_samples)
+        old_state, action, reward, new_state, is_terminal = env.get_train_tuple()
+        fixed_samples.append(old_state)
+    return np.squeeze(np.array(fixed_samples))
 
 def main():
     parser = argparse.ArgumentParser(description='Run DQN on Atari Space Invaders')
@@ -53,8 +48,6 @@ def main():
                                 'Number of frames to feed to the Q-network')
     parser.add_argument('--batch_size', default=32, type = int, help=
                                 'Batch size of the training part')
-    parser.add_argument('--num_process', default=3, type = int, help=
-                                'Number of parallel environment')
     parser.add_argument('--num_iteration', default=20000000, type = int, help=
                                 'number of iterations to train')
     parser.add_argument('--eval_every', default=0.001, type = float, help=
@@ -65,11 +58,11 @@ def main():
                                 'Whether use double DQN, 0 means no, 1 means yes.')
     parser.add_argument('--is_per', default=1, type = int, help=
                                 'Whether use PriorityExperienceReplay, 0 means no, 1 means yes.')
-    parser.add_argument('--is_distributional', default=1, type = int, help=
+    parser.add_argument('--is_distributional', default=0, type = int, help=
                                 'Whether use distributional DQN, 0 means no, 1 means yes.')
     parser.add_argument('--num_step', default=1, type = int, help=
                                 'Num Step for multi-step DQN, 3 is recommended')
-    parser.add_argument('--is_noisy', default=1, type = int, help=
+    parser.add_argument('--is_noisy', default=0, type = int, help=
                                 'Whether use NoisyNet, 0 means no, 1 means yes.')
 
 
@@ -77,17 +70,15 @@ def main():
     args.input_shape = tuple(args.input_shape)
     print('Environment: %s.'%(args.env,))
     env = gym.make(args.env)
-    num_actions = env.action_space.n
+    env = Environment(args.env, args.window_size, args.input_shape, NUM_FRAME_PER_ACTION)
+    num_actions = env.num_actions
     print('number_actions: %d.'%(num_actions,))
-    env.close()
 
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-    batch_environment = BatchEnvironment(args.env, args.num_process,
-                args.window_size, args.input_shape, NUM_FRAME_PER_ACTION, MAX_EPISODE_LENGTH)
 
     if args.is_per == 1:
         replay_memory = PriorityExperienceReplay(REPLAYMEMORY_SIZE, args.window_size, args.input_shape)
@@ -132,23 +123,23 @@ def main():
         sess.run(update_target_params_ops)
 
         print('Prepare fixed samples for mean max Q.')
-        fixed_samples = get_fixed_samples(batch_environment, num_actions, NUM_FIXED_SAMPLES)
+        fixed_samples = get_fixed_samples(env, num_actions, NUM_FIXED_SAMPLES)
 
         print('Burn in replay_memory.')
-        agent.fit(sess, batch_environment, NUM_BURN_IN, do_train=False)
+        agent.fit(sess, env, NUM_BURN_IN, do_train=False)
         
         # Begin to train:
         fit_iteration = int(args.num_iteration * args.eval_every)
 
         for i in range(0, args.num_iteration, fit_iteration):
             # Evaluate:
-            reward_mean, reward_var = agent.evaluate(sess, batch_environment, NUM_EVALUATE_EPSIODE)
+            reward_mean, reward_var = agent.evaluate(sess, env, NUM_EVALUATE_EPSIODE)
             mean_max_Q = agent.get_mean_max_Q(sess, fixed_samples)
             print("%d, %f, %f, %f"%(i, mean_max_Q, reward_mean, reward_var))
             # Train:
-            agent.fit(sess, batch_environment, fit_iteration, do_train=True)
+            agent.fit(sess, env, fit_iteration, do_train=True)
 
-    batch_environment.close()
+    env.close()
 
 if __name__ == '__main__':
     main()

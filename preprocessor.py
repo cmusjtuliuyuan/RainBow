@@ -113,14 +113,16 @@ class Preprocessor:
     def reset(self):
         self._history_preprocessor.reset()
 
-    def process_reward(self, reward):
+    @staticmethod
+    def process_reward(reward):
         """Get sign of reward: -1, 0 or 1."""
         return np.sign(reward)
 
     def get_state(self):
         return self._history_preprocessor.get_state()
 
-    def state2float(self, state):
+    @staticmethod
+    def state2float(state):
         if state.dtype != np.uint8:
             raise Exception("Error, State should be in np.unit8")
-        return state.astype(np.float16) / 255.0
+        return state.astype(np.float32) / 255.0
